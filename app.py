@@ -8,7 +8,9 @@ from databricks.sdk import WorkspaceClient
 # ─────────────────────────────────────────────
 VOLUME_PATH  = "/Volumes/dev_omni/dev_omni_gold/audio_files"
 TRACES_TABLE = "dev_omni.dev_omni_gold.traces"
-WAREHOUSE_ID = "2a6b5b84e8974695"
+# Databricks Apps injects the configured warehouse ID via environment variable.
+# Falls back to the hardcoded ID if running outside of a Databricks Apps context.
+WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "2a6b5b84e8974695")
 
 # ─────────────────────────────────────────────
 # STREAMLIT VERSION CHECK
@@ -116,6 +118,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"Volume: `{VOLUME_PATH}`")
     st.caption(f"Table: `{TRACES_TABLE}`")
+    st.caption(f"Warehouse: `{WAREHOUSE_ID}`")
     st.caption(f"Streamlit: `{st.__version__}`")
     st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
