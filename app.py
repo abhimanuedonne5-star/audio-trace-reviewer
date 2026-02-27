@@ -5,8 +5,8 @@ import os
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-VOLUME_PATH = "/Volumes/my_catalog/my_schema/audio_files"
-TRACES_TABLE = "my_catalog.my_schema.langfuse_traces"  # your Databricks table
+VOLUME_PATH = "/Volumes/dev_omni/dev_omni_gold/audio_files"
+TRACES_TABLE = "dev_omni.dev_omni_gold.traces"  # your Databricks table
 
 # ─────────────────────────────────────────────
 # SPARK SESSION (already available in Databricks)
@@ -21,10 +21,7 @@ def fetch_all_traces():
     df = spark.sql(f"""
         SELECT 
             trace_id,
-            input,       -- the user query
-            output,      -- LLM response
-            scores,
-            timestamp
+            input
         FROM {TRACES_TABLE}
         ORDER BY timestamp DESC
     """).toPandas()
@@ -95,7 +92,7 @@ st.divider()
 st.subheader("📋 Trace List — Click a row to review")
 
 # Show clean preview table
-preview_df = df[["trace_id", "input", "timestamp"]].copy()
+preview_df = df[["trace_id", "input"]].copy()
 preview_df["input"] = preview_df["input"].str[:100] + "..."
 preview_df["audio"] = df["trace_id"].apply(
     lambda tid: "✅" if os.path.exists(f"{VOLUME_PATH}/{tid}.wav") else "❌"
@@ -109,7 +106,6 @@ selection = st.dataframe(
     column_config={
         "trace_id": "Trace ID",
         "input": "Query Preview",
-        "timestamp": "Timestamp",
         "audio": "Audio"
     }
 )
@@ -151,14 +147,6 @@ with trace_col:
 
     st.markdown("**🧑 User Query**")
     st.info(selected["input"])
-
-    st.markdown("**🤖 LLM Response**")
-    st.success(selected["output"])
-
-    st.markdown("**📊 Scores**")
-    st.json(selected["scores"])
-
-    st.caption(f"🕐 {selected['timestamp']}")
 
 # ─────────────────────────────────────────────
 # PREV / NEXT NAVIGATION
