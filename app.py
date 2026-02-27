@@ -11,6 +11,18 @@ TRACES_TABLE = "dev_omni.dev_omni_gold.traces"
 WAREHOUSE_ID = "2a6b5b84e8974695"
 
 # ─────────────────────────────────────────────
+# STREAMLIT VERSION CHECK
+# on_select="rerun" requires Streamlit >= 1.35.0
+# ─────────────────────────────────────────────
+def _st_version():
+    try:
+        return tuple(int(x) for x in st.__version__.split(".")[:2])
+    except Exception:
+        return (0, 0)
+
+SUPPORTS_ON_SELECT = _st_version() >= (1, 35)
+
+# ─────────────────────────────────────────────
 # DATABRICKS CLIENT
 # ─────────────────────────────────────────────
 @st.cache_resource
@@ -34,7 +46,7 @@ def get_audio_trace_ids():
 
 # ─────────────────────────────────────────────
 # FETCH TRACES FROM TABLE
-# Returns (DataFrame, error_string).  Never calls st.* — no side effects in cache.
+# Returns (DataFrame, error_string) — no st.* calls inside (cache must be pure)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def fetch_all_traces():
@@ -90,6 +102,8 @@ with st.sidebar:
     st.divider()
     st.caption(f"Volume: `{VOLUME_PATH}`")
     st.caption(f"Table: `{TRACES_TABLE}`")
+    st.caption(f"Streamlit: `{st.__version__}`")          # helps diagnose version issues
+    st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
 # ─────────────────────────────────────────────
 # LOAD DATA
@@ -99,7 +113,7 @@ with st.spinner("Loading traces..."):
     audio_ids = get_audio_trace_ids()
 
 # ─────────────────────────────────────────────
-# ERROR STATES  (no st.stop() — use if/else throughout)
+# ERROR STATES  (no st.stop() — if/else only)
 # ─────────────────────────────────────────────
 if fetch_error:
     st.error(f"❌ Query execution failed: {fetch_error}")
@@ -108,10 +122,10 @@ elif df_all is None:
     st.error("❌ No data returned from the traces table.")
 
 else:
-    # ── Filter: only traces with a matching audio file ─────────────────────────
+    # ── Filter: only traces that have a matching audio file ────────────────────
     df = df_all[df_all["trace_id"].isin(audio_ids)].reset_index(drop=True)
 
-    # ── Apply search ────────────────────────────────────────────────────────────
+    # ── Apply search ───────────────────────────────────────────────────────────
     if search:
         mask = (
             df["trace_id"].str.contains(search, case=False, na=False) |
@@ -127,38 +141,58 @@ else:
 
     else:
         st.success(
-            f"✅ {len(df)} traces with audio found  |  "
+            f"✅ {len(df)} traces with audio  |  "
             f"{len(audio_ids)} total audio files in volume"
         )
         st.divider()
 
-        # ── Trace selection table ───────────────────────────────────────────────
+        # ── Trace selection table ──────────────────────────────────────────────
         st.subheader("📋 Trace List — Click a row to review")
 
         preview_df = df[["trace_id", "input"]].copy()
         preview_df["input"] = df["input"].fillna("").astype(str).str[:120] + "..."
 
-        selection = st.dataframe(
-            preview_df,
-            use_container_width=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            column_config={
-                "trace_id": st.column_config.TextColumn("Trace ID"),
-                "input"   : st.column_config.TextColumn("Query Preview"),
-            },
-            hide_index=True,
-            # Changing key resets stale widget selection when df row count changes
-            key=f"trace_table_{len(df)}",
-        )
+        selected_rows = []   # default: nothing selected
 
-        # ── Row selection — NO st.stop(), use if/else only ─────────────────────
-        try:
-            selected_rows = list(selection.selection.rows)
-        except Exception:
-            selected_rows = []
+        if SUPPORTS_ON_SELECT:
+            # ── Interactive row-click selection (Streamlit >= 1.35) ────────────
+            try:
+                selection = st.dataframe(
+                    preview_df,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    column_config={
+                        "trace_id": st.column_config.TextColumn("Trace ID"),
+                        "input"   : st.column_config.TextColumn("Query Preview"),
+                    },
+                    hide_index=True,
+                    # Key resets stale widget state when row count changes
+                    key=f"trace_table_{len(df)}",
+                )
+                selected_rows = list(selection.selection.rows)
+            except Exception as e:
+                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                st.warning(f"Row-click selection unavailable: {e}")
+                selected_rows = []
+        else:
+            # ── Fallback: selectbox (Streamlit < 1.35) ─────────────────────────
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+            st.warning(
+                f"Your Streamlit version (`{st.__version__}`) does not support "
+                "interactive row selection. Use the dropdown below instead."
+            )
+            chosen = st.selectbox(
+                "Select Trace ID to review:",
+                options=["— select —"] + df["trace_id"].tolist(),
+                index=0,
+            )
+            if chosen != "— select —":
+                matches = df[df["trace_id"] == chosen]
+                if not matches.empty:
+                    selected_rows = [int(matches.index[0])]
 
-        # Validate index before any access
+        # ── Detail panel — no st.stop(), pure if/else ─────────────────────────
         row_valid = (
             len(selected_rows) > 0
             and 0 <= int(selected_rows[0]) < len(df)
@@ -173,8 +207,6 @@ else:
             trace_id    = selected["trace_id"]
 
             st.divider()
-
-            # ── Side by side: audio + trace ─────────────────────────────────────
             st.subheader(f"🔎 Trace ID: `{trace_id}`")
             st.caption(f"Record {current_idx + 1} of {len(df)}")
 
