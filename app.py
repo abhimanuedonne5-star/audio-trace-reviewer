@@ -32,11 +32,7 @@ def fetch_all_traces():
             SELECT 
                 trace_id,
                 input,
-                output,
-                scores,
-                timestamp
             FROM {TRACES_TABLE}
-            ORDER BY timestamp DESC
         """
     )
     columns = [col.name for col in result.manifest.schema.columns]
@@ -100,7 +96,7 @@ st.divider()
 # ─────────────────────────────────────────────
 st.subheader("📋 Trace List — Click a row to review")
 
-preview_df = df[["trace_id", "input", "timestamp"]].copy()
+preview_df = df[["trace_id", "input"]].copy()
 preview_df["input"]  = preview_df["input"].str[:100] + "..."
 preview_df["audio"]  = df["trace_id"].apply(
     lambda tid: "✅" if os.path.exists(f"{VOLUME_PATH}/{tid}.wav") else "❌"
@@ -114,7 +110,6 @@ selection = st.dataframe(
     column_config={
         "trace_id" : "Trace ID",
         "input"    : "Query Preview",
-        "timestamp": "Timestamp",
         "audio"    : "Audio"
     }
 )
@@ -149,11 +144,6 @@ with trace_col:
     st.markdown("### 📝 Trace Details")
     st.markdown("**🧑 User Query**")
     st.info(selected["input"])
-    st.markdown("**🤖 LLM Response**")
-    st.success(selected["output"])
-    st.markdown("**📊 Scores**")
-    st.json(selected["scores"])
-    st.caption(f"🕐 {selected['timestamp']}")
 
 # ─────────────────────────────────────────────
 # PREV / NEXT NAVIGATION
