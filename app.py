@@ -127,7 +127,10 @@ selected_rows = selection.selection.rows
 if not selected_rows:
     st.info("👆 Click any row above to review the trace and play its audio.")
     st.stop()
-
+# ◄── ADD THIS CHECK
+if selected_rows[0] >= len(df):
+    st.warning("Selection out of range, please click a row again.")
+    st.stop()
 selected = df.iloc[selected_rows[0]]
 trace_id = selected["trace_id"]
 
