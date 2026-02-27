@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.sql import ExecuteStatementRequestOnWaitTimeout
 
 # ─────────────────────────────────────────────
 # CONFIG — update these values
@@ -23,7 +24,7 @@ def get_client():
 @st.cache_data(ttl=60)
 def fetch_all_traces():
     w = get_client()
-
+    
     response = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=f"""
@@ -32,7 +33,7 @@ def fetch_all_traces():
             ORDER BY trace_id DESC
         """,
         wait_timeout="30s",
-        on_wait_timeout="CANCEL"
+        on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL  # ◄── Enum not string
     )
 
     if response is None:
