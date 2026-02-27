@@ -4,14 +4,6 @@ import os
 from databricks.sdk import WorkspaceClient
 
 # ─────────────────────────────────────────────
-# RESET STALE SELECTION ON FRESH LOAD
-# ─────────────────────────────────────────────
-if "fresh_load" not in st.session_state:
-    st.session_state["fresh_load"] = True
-    if "selection" in st.session_state:
-        del st.session_state["selection"]
-
-# ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
 VOLUME_PATH  = "/Volumes/dev_omni/dev_omni_gold/audio_files"
@@ -26,24 +18,43 @@ def get_client():
     return WorkspaceClient()
 
 # ─────────────────────────────────────────────
-# FETCH TRACES
+# LIST AUDIO FILES — scanned once per minute
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def get_audio_trace_ids():
+    """Return a frozenset of trace IDs that have a matching .wav file."""
+    try:
+        return frozenset(
+            os.path.splitext(f)[0]
+            for f in os.listdir(VOLUME_PATH)
+            if f.lower().endswith(".wav")
+        )
+    except Exception as e:
+        st.warning(f"⚠️ Could not read audio volume: {e}")
+        return frozenset()
+
+# ─────────────────────────────────────────────
+# FETCH TRACES FROM TABLE
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def fetch_all_traces():
     w = get_client()
-
-    response = w.statement_execution.execute_statement(
-        warehouse_id=WAREHOUSE_ID,
-        statement=f"""
-            SELECT trace_id, input
-            FROM {TRACES_TABLE}
-            ORDER BY trace_id DESC
-        """,
-        wait_timeout="30s"
-    )
+    try:
+        response = w.statement_execution.execute_statement(
+            warehouse_id=WAREHOUSE_ID,
+            statement=f"""
+                SELECT trace_id, input
+                FROM {TRACES_TABLE}
+                ORDER BY trace_id DESC
+            """,
+            wait_timeout="30s"
+        )
+    except Exception as e:
+        st.error(f"❌ Query execution failed: {e}")
+        st.stop()
 
     if response is None:
-        st.error("❌ Query returned None — check your WAREHOUSE_ID")
+        st.error("❌ Query returned None — check your WAREHOUSE_ID.")
         st.stop()
 
     if response.result is None or response.result.data_array is None:
@@ -51,12 +62,15 @@ def fetch_all_traces():
 
     columns = [col.name for col in response.manifest.schema.columns]
     rows    = [list(row) for row in response.result.data_array]
-    return pd.DataFrame(rows, columns=columns)
+    df = pd.DataFrame(rows, columns=columns)
+    # Ensure trace_id is always a plain string for path construction & filtering
+    df["trace_id"] = df["trace_id"].astype(str)
+    return df
 
 # ─────────────────────────────────────────────
-# GET AUDIO
+# GET AUDIO BYTES
 # ─────────────────────────────────────────────
-def get_audio(trace_id):
+def get_audio(trace_id: str):
     file_path = f"{VOLUME_PATH}/{trace_id}.wav"
     if os.path.exists(file_path):
         with open(file_path, "rb") as f:
@@ -68,15 +82,14 @@ def get_audio(trace_id):
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="Audio + Trace Reviewer", layout="wide")
 st.title("🎧 Audio + Trace Review Dashboard")
-st.caption("Select a trace from the list to play audio and view the associated query side by side.")
+st.caption("Shows only traces that have a matching audio file. Click a row to play audio and review the query.")
 
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.header("🔍 Search & Filter")
+    st.header("🔍 Search")
     search = st.text_input("Search by Trace ID or Query", placeholder="e.g. trace_001")
-    show_only_audio = st.checkbox("Show only traces with audio", value=False)
     st.divider()
     st.caption(f"Volume: `{VOLUME_PATH}`")
     st.caption(f"Table: `{TRACES_TABLE}`")
@@ -85,26 +98,28 @@ with st.sidebar:
 # LOAD DATA
 # ─────────────────────────────────────────────
 with st.spinner("Loading traces..."):
-    df = fetch_all_traces()
+    df_all    = fetch_all_traces()
+    audio_ids = get_audio_trace_ids()
 
-# Apply search filter
+# ── Keep only traces that have a corresponding audio file ──────────────────────
+df = df_all[df_all["trace_id"].isin(audio_ids)].reset_index(drop=True)
+
+# ── Apply search filter ────────────────────────────────────────────────────────
 if search:
-    df = df[
+    mask = (
         df["trace_id"].str.contains(search, case=False, na=False) |
-        df["input"].str.contains(search, case=False, na=False)
-    ].reset_index(drop=True)
-
-# Apply audio filter
-if show_only_audio:
-    df = df[df["trace_id"].apply(
-        lambda tid: os.path.exists(f"{VOLUME_PATH}/{tid}.wav")
-    )].reset_index(drop=True)
+        df["input"].fillna("").astype(str).str.contains(search, case=False, na=False)
+    )
+    df = df[mask].reset_index(drop=True)
 
 if df.empty:
-    st.warning("No traces found.")
+    if not audio_ids:
+        st.error(f"❌ No .wav files found in `{VOLUME_PATH}`. Check the volume path.")
+    else:
+        st.warning("No traces found matching your search.")
     st.stop()
 
-st.success(f"✅ {len(df)} traces found")
+st.success(f"✅ {len(df)} traces with audio found  |  {len(audio_ids)} total audio files in volume")
 st.divider()
 
 # ─────────────────────────────────────────────
@@ -112,11 +127,9 @@ st.divider()
 # ─────────────────────────────────────────────
 st.subheader("📋 Trace List — Click a row to review")
 
-preview_df = df.copy()
-preview_df["input"] = preview_df["input"].str[:100] + "..."
-preview_df["audio"] = df["trace_id"].apply(
-    lambda tid: "✅" if os.path.exists(f"{VOLUME_PATH}/{tid}.wav") else "❌"
-)
+preview_df = df[["trace_id", "input"]].copy()
+# Safe truncation: handles None/NULL values from the database
+preview_df["input"] = df["input"].fillna("").astype(str).str[:120] + "..."
 
 selection = st.dataframe(
     preview_df,
@@ -124,14 +137,14 @@ selection = st.dataframe(
     on_select="rerun",
     selection_mode="single-row",
     column_config={
-        "trace_id": "Trace ID",
-        "input"   : "Query Preview",
-        "audio"   : "Audio"
-    }
+        "trace_id": st.column_config.TextColumn("Trace ID"),
+        "input"   : st.column_config.TextColumn("Query Preview"),
+    },
+    hide_index=True,
 )
 
 # ─────────────────────────────────────────────
-# SAFE ROW SELECTION
+# ROW SELECTION → DETAIL PANEL
 # ─────────────────────────────────────────────
 selected_rows = selection.selection.rows
 
@@ -140,7 +153,6 @@ if not selected_rows:
     st.stop()
 
 current_idx = selected_rows[0]
-
 if current_idx >= len(df):
     st.info("👆 Click any row above to review the trace and play its audio.")
     st.stop()
@@ -154,6 +166,7 @@ st.divider()
 # SIDE BY SIDE — AUDIO + TRACE
 # ─────────────────────────────────────────────
 st.subheader(f"🔎 Trace ID: `{trace_id}`")
+st.caption(f"Record {current_idx + 1} of {len(df)}")
 
 audio_col, trace_col = st.columns([1, 1])
 
@@ -164,27 +177,11 @@ with audio_col:
         st.audio(audio_bytes, format="audio/wav")
         st.caption(f"📁 `{VOLUME_PATH}/{trace_id}.wav`")
     else:
-        st.error(f"No audio file found for `{trace_id}`")
+        st.error(f"Audio file unexpectedly missing for `{trace_id}`")
         st.caption(f"Expected: `{VOLUME_PATH}/{trace_id}.wav`")
 
 with trace_col:
     st.markdown("### 📝 Trace Details")
     st.markdown("**🧑 User Query**")
-    st.info(selected["input"])
+    st.info(selected["input"] if pd.notna(selected["input"]) else "_No input recorded_")
     st.caption(f"🔑 Trace ID: `{trace_id}`")
-
-# ─────────────────────────────────────────────
-# PREV / NEXT NAVIGATION
-# ─────────────────────────────────────────────
-st.divider()
-col_prev, col_mid, col_next = st.columns([1, 3, 1])
-
-with col_prev:
-    st.button("⬅️ Previous", disabled=(current_idx == 0))
-with col_mid:
-    st.markdown(
-        f"<div style='text-align:center; padding-top:8px'>Record <b>{current_idx + 1}</b> of <b>{len(df)}</b></div>",
-        unsafe_allow_html=True
-    )
-with col_next:
-    st.button("Next ➡️", disabled=(current_idx >= len(df) - 1))
