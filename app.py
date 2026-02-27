@@ -141,20 +141,30 @@ selection = st.dataframe(
         "input"   : st.column_config.TextColumn("Query Preview"),
     },
     hide_index=True,
+    # Key resets widget state (clears stale selection) whenever df row count changes
+    key=f"trace_table_{len(df)}",
 )
 
 # ─────────────────────────────────────────────
 # ROW SELECTION → DETAIL PANEL
 # ─────────────────────────────────────────────
-selected_rows = selection.selection.rows
 
-if not selected_rows:
+# Defensive access: Streamlit's return type can vary across runtime versions
+try:
+    selected_rows = list(selection.selection.rows)
+except Exception:
+    selected_rows = []
+
+# Explicit length check (more reliable than `not selected_rows` for non-list types)
+if len(selected_rows) == 0:
     st.info("👆 Click any row above to review the trace and play its audio.")
     st.stop()
 
-current_idx = selected_rows[0]
-if current_idx >= len(df):
-    st.info("👆 Click any row above to review the trace and play its audio.")
+current_idx = int(selected_rows[0])
+
+# Guard against stale index when trace count changes between cache refreshes
+if current_idx < 0 or current_idx >= len(df):
+    st.info("👆 Selection is stale — please click a row again to refresh.")
     st.stop()
 
 selected = df.iloc[current_idx]
