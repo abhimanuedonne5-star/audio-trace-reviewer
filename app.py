@@ -1,0 +1,181 @@
+import streamlit as st
+from pyspark.sql import SparkSession
+import os
+
+# ─────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────
+VOLUME_PATH = "/Volumes/my_catalog/my_schema/audio_files"
+TRACES_TABLE = "my_catalog.my_schema.langfuse_traces"  # your Databricks table
+
+# ─────────────────────────────────────────────
+# SPARK SESSION (already available in Databricks)
+# ─────────────────────────────────────────────
+spark = SparkSession.builder.getOrCreate()
+
+# ─────────────────────────────────────────────
+# FETCH ALL TRACES FROM DATABRICKS TABLE
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def fetch_all_traces():
+    df = spark.sql(f"""
+        SELECT 
+            trace_id,
+            input,       -- the user query
+            output,      -- LLM response
+            scores,
+            timestamp
+        FROM {TRACES_TABLE}
+        ORDER BY timestamp DESC
+    """).toPandas()
+    return df
+
+# ─────────────────────────────────────────────
+# GET AUDIO FROM VOLUME USING TRACE ID
+# ─────────────────────────────────────────────
+def get_audio(trace_id):
+    # Since file is always named {trace_id}.wav
+    file_path = f"{VOLUME_PATH}/{trace_id}.wav"
+    if os.path.exists(file_path):
+        with open(file_path, "rb") as f:
+            return f.read()
+    return None
+
+# ─────────────────────────────────────────────
+# PAGE CONFIG
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="Audio + Trace Reviewer",
+    layout="wide"
+)
+
+st.title("🎧 Audio + Trace Review Dashboard")
+st.caption("Select a trace from the list to play audio and view the associated query side by side.")
+
+# ─────────────────────────────────────────────
+# SIDEBAR — SEARCH & FILTER
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.header("🔍 Search & Filter")
+    search = st.text_input("Search by Trace ID or Query", placeholder="e.g. abc_1 or account balance")
+    show_only_audio = st.checkbox("Show only traces with audio", value=False)
+    st.divider()
+    st.caption("Audio files are read from Unity Catalog Volume.")
+    st.caption(f"`{VOLUME_PATH}`")
+
+# ─────────────────────────────────────────────
+# LOAD DATA
+# ─────────────────────────────────────────────
+with st.spinner("Loading traces..."):
+    df = fetch_all_traces()
+
+# Apply search filter
+if search:
+    df = df[
+        df["trace_id"].str.contains(search, case=False, na=False) |
+        df["input"].str.contains(search, case=False, na=False)
+    ]
+
+# Apply audio filter
+if show_only_audio:
+    df = df[df["trace_id"].apply(
+        lambda tid: os.path.exists(f"{VOLUME_PATH}/{tid}.wav")
+    )]
+
+if df.empty:
+    st.warning("No traces found. Try adjusting your search.")
+    st.stop()
+
+st.success(f"✅ {len(df)} traces found")
+st.divider()
+
+# ─────────────────────────────────────────────
+# TRACE SELECTION TABLE
+# ─────────────────────────────────────────────
+st.subheader("📋 Trace List — Click a row to review")
+
+# Show clean preview table
+preview_df = df[["trace_id", "input", "timestamp"]].copy()
+preview_df["input"] = preview_df["input"].str[:100] + "..."
+preview_df["audio"] = df["trace_id"].apply(
+    lambda tid: "✅" if os.path.exists(f"{VOLUME_PATH}/{tid}.wav") else "❌"
+)
+
+selection = st.dataframe(
+    preview_df,
+    use_container_width=True,
+    on_select="rerun",
+    selection_mode="single-row",
+    column_config={
+        "trace_id": "Trace ID",
+        "input": "Query Preview",
+        "timestamp": "Timestamp",
+        "audio": "Audio"
+    }
+)
+
+selected_rows = selection.selection.rows
+if not selected_rows:
+    st.info("👆 Click any row above to review the trace and play its audio.")
+    st.stop()
+
+# Get selected trace
+selected = df.iloc[selected_rows[0]]
+trace_id = selected["trace_id"]
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# SIDE BY SIDE — AUDIO + TRACE
+# ─────────────────────────────────────────────
+st.subheader(f"🔎 Trace ID: `{trace_id}`")
+
+audio_col, trace_col = st.columns([1, 1])
+
+# ── LEFT: AUDIO PLAYER ──────────────────────
+with audio_col:
+    st.markdown("### 🎧 Audio")
+    
+    audio_bytes = get_audio(trace_id)
+    
+    if audio_bytes:
+        st.audio(audio_bytes, format="audio/wav")
+        st.caption(f"📁 `{VOLUME_PATH}/{trace_id}.wav`")
+    else:
+        st.error(f"No audio file found for `{trace_id}`")
+        st.caption(f"Expected path: `{VOLUME_PATH}/{trace_id}.wav`")
+
+# ── RIGHT: TRACE DETAILS ─────────────────────
+with trace_col:
+    st.markdown("### 📝 Trace Details")
+
+    st.markdown("**🧑 User Query**")
+    st.info(selected["input"])
+
+    st.markdown("**🤖 LLM Response**")
+    st.success(selected["output"])
+
+    st.markdown("**📊 Scores**")
+    st.json(selected["scores"])
+
+    st.caption(f"🕐 {selected['timestamp']}")
+
+# ─────────────────────────────────────────────
+# PREV / NEXT NAVIGATION
+# ─────────────────────────────────────────────
+st.divider()
+col_prev, col_mid, col_next = st.columns([1, 3, 1])
+
+current_idx = selected_rows[0]
+
+with col_prev:
+    st.button("⬅️ Previous", disabled=(current_idx == 0))
+
+with col_mid:
+    st.markdown(
+        f"<div style='text-align:center; padding-top:8px'>Record <b>{current_idx + 1}</b> of <b>{len(df)}</b></div>",
+        unsafe_allow_html=True
+    )
+
+with col_next:
+    st.button("Next ➡️", disabled=(current_idx >= len(df) - 1))
