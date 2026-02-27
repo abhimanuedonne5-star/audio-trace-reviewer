@@ -1,42 +1,54 @@
-
-
-
 import streamlit as st
 import pandas as pd
 import os
 from databricks.sdk import WorkspaceClient
 
 # ─────────────────────────────────────────────
-# CONFIG
+# CONFIG — update these values
 # ─────────────────────────────────────────────
 VOLUME_PATH = "/Volumes/dev_omni/dev_omni_gold/audio_files"
 TRACES_TABLE = "dev_omni.dev_omni_gold.traces"  # your Databricks table
-WAREHOUSE_ID = "2a6b5b84e8974695"   # ◄── paste your warehouse ID here
+WAREHOUSE_ID = "2a6b5b84e8974695"   # ◄── paste your warehouse ID
 
 # ─────────────────────────────────────────────
-# DATABRICKS CLIENT (auto-authenticates in Apps)
+# DATABRICKS CLIENT
 # ─────────────────────────────────────────────
 @st.cache_resource
 def get_client():
     return WorkspaceClient()
 
 # ─────────────────────────────────────────────
-# FETCH TRACES VIA SQL WAREHOUSE
+# FETCH TRACES — only trace_id and input
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def fetch_all_traces():
     w = get_client()
-    result = w.statement_execution.execute_statement(
+
+    response = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=f"""
-            SELECT 
-                trace_id,
-                input,
+            SELECT trace_id, input
             FROM {TRACES_TABLE}
-        """
+            ORDER BY trace_id DESC
+        """,
+        wait_timeout="30s",
+        on_wait_timeout="CANCEL"
     )
-    columns = [col.name for col in result.manifest.schema.columns]
-    rows = [list(row.values) for row in result.result.data_array]
+
+    if response is None:
+        st.error("❌ Query returned None — check your WAREHOUSE_ID")
+        st.stop()
+
+    if response.status.state.value not in ("SUCCEEDED",):
+        st.error(f"❌ Query failed: {response.status.state.value}")
+        st.error(f"Error: {response.status.error}")
+        st.stop()
+
+    if response.result is None or response.result.data_array is None:
+        return pd.DataFrame(columns=["trace_id", "input"])
+
+    columns = [col.name for col in response.manifest.schema.columns]
+    rows = [list(row.values) for row in response.result.data_array]
     return pd.DataFrame(rows, columns=columns)
 
 # ─────────────────────────────────────────────
@@ -73,12 +85,14 @@ with st.sidebar:
 with st.spinner("Loading traces..."):
     df = fetch_all_traces()
 
+# Apply search filter
 if search:
     df = df[
         df["trace_id"].str.contains(search, case=False, na=False) |
         df["input"].str.contains(search, case=False, na=False)
     ]
 
+# Apply audio filter
 if show_only_audio:
     df = df[df["trace_id"].apply(
         lambda tid: os.path.exists(f"{VOLUME_PATH}/{tid}.wav")
@@ -96,9 +110,9 @@ st.divider()
 # ─────────────────────────────────────────────
 st.subheader("📋 Trace List — Click a row to review")
 
-preview_df = df[["trace_id", "input"]].copy()
-preview_df["input"]  = preview_df["input"].str[:100] + "..."
-preview_df["audio"]  = df["trace_id"].apply(
+preview_df = df.copy()
+preview_df["input"] = preview_df["input"].str[:100] + "..."
+preview_df["audio"] = df["trace_id"].apply(
     lambda tid: "✅" if os.path.exists(f"{VOLUME_PATH}/{tid}.wav") else "❌"
 )
 
@@ -119,8 +133,8 @@ if not selected_rows:
     st.info("👆 Click any row above to review the trace and play its audio.")
     st.stop()
 
-selected   = df.iloc[selected_rows[0]]
-trace_id   = selected["trace_id"]
+selected = df.iloc[selected_rows[0]]
+trace_id = selected["trace_id"]
 
 st.divider()
 
@@ -131,6 +145,7 @@ st.subheader(f"🔎 Trace ID: `{trace_id}`")
 
 audio_col, trace_col = st.columns([1, 1])
 
+# ── LEFT: AUDIO PLAYER ──────────────────────
 with audio_col:
     st.markdown("### 🎧 Audio")
     audio_bytes = get_audio(trace_id)
@@ -139,11 +154,14 @@ with audio_col:
         st.caption(f"📁 `{VOLUME_PATH}/{trace_id}.wav`")
     else:
         st.error(f"No audio file found for `{trace_id}`")
+        st.caption(f"Expected: `{VOLUME_PATH}/{trace_id}.wav`")
 
+# ── RIGHT: TRACE DETAILS ─────────────────────
 with trace_col:
     st.markdown("### 📝 Trace Details")
     st.markdown("**🧑 User Query**")
     st.info(selected["input"])
+    st.caption(f"🔑 Trace ID: `{trace_id}`")
 
 # ─────────────────────────────────────────────
 # PREV / NEXT NAVIGATION
@@ -161,5 +179,3 @@ with col_mid:
     )
 with col_next:
     st.button("Next ➡️", disabled=(current_idx >= len(df) - 1))
-
-
