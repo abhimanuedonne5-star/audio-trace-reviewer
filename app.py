@@ -24,7 +24,7 @@ def get_client():
 @st.cache_data(ttl=60)
 def fetch_all_traces():
     w = get_client()
-    
+
     response = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=f"""
@@ -32,24 +32,18 @@ def fetch_all_traces():
             FROM {TRACES_TABLE}
             ORDER BY trace_id DESC
         """,
-        wait_timeout="30s",
-        on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL  # ◄── Enum not string
+        wait_timeout="30s"
     )
 
     if response is None:
         st.error("❌ Query returned None — check your WAREHOUSE_ID")
         st.stop()
 
-    if response.status.state.value not in ("SUCCEEDED",):
-        st.error(f"❌ Query failed: {response.status.state.value}")
-        st.error(f"Error: {response.status.error}")
-        st.stop()
-
     if response.result is None or response.result.data_array is None:
         return pd.DataFrame(columns=["trace_id", "input"])
 
     columns = [col.name for col in response.manifest.schema.columns]
-    rows = [list(row.values) for row in response.result.data_array]
+    rows = [list(row) for row in response.result.data_array]   # ◄── fixed
     return pd.DataFrame(rows, columns=columns)
 
 # ─────────────────────────────────────────────
