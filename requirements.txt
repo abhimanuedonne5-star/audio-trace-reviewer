@@ -1,4 +1,3 @@
 streamlit
-pyspark
+databricks-sdk
 pandas
-plotly 
