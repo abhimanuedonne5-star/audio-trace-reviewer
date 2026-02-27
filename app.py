@@ -31,18 +31,32 @@ def get_client():
 
 # ─────────────────────────────────────────────
 # LIST AUDIO FILES — scanned once per minute
+# Returns (frozenset, error_string) — never silently swallows errors
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def get_audio_trace_ids():
-    """Return a frozenset of trace IDs that have a matching .wav file."""
+    """Return (frozenset of trace IDs with .wav files, error_string or None)."""
+    path_exists = os.path.exists(VOLUME_PATH)
+    if not path_exists:
+        return frozenset(), f"Path does not exist: `{VOLUME_PATH}`"
     try:
-        return frozenset(
+        all_files = os.listdir(VOLUME_PATH)
+        wav_ids = frozenset(
             os.path.splitext(f)[0]
-            for f in os.listdir(VOLUME_PATH)
+            for f in all_files
             if f.lower().endswith(".wav")
         )
-    except Exception:
-        return frozenset()
+        if not wav_ids:
+            non_wav = [f for f in all_files if not f.lower().endswith(".wav")]
+            detail = (
+                f"Directory exists and contains {len(all_files)} file(s), "
+                f"but none end in `.wav`. Other files found: {non_wav[:5]}"
+                if all_files else "Directory exists but is empty."
+            )
+            return frozenset(), detail
+        return wav_ids, None
+    except Exception as e:
+        return frozenset(), str(e)
 
 # ─────────────────────────────────────────────
 # FETCH TRACES FROM TABLE
@@ -102,7 +116,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"Volume: `{VOLUME_PATH}`")
     st.caption(f"Table: `{TRACES_TABLE}`")
-    st.caption(f"Streamlit: `{st.__version__}`")          # helps diagnose version issues
+    st.caption(f"Streamlit: `{st.__version__}`")
     st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
 # ─────────────────────────────────────────────
@@ -110,7 +124,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 with st.spinner("Loading traces..."):
     df_all, fetch_error = fetch_all_traces()
-    audio_ids = get_audio_trace_ids()
+    audio_ids, volume_error = get_audio_trace_ids()
 
 # ─────────────────────────────────────────────
 # ERROR STATES  (no st.stop() — if/else only)
@@ -120,6 +134,15 @@ if fetch_error:
 
 elif df_all is None:
     st.error("❌ No data returned from the traces table.")
+
+elif volume_error:
+    st.error(f"❌ Cannot read audio volume: {volume_error}")
+    st.info(
+        "**How to fix:** Make sure the app's service principal has been granted "
+        "`READ VOLUME` on the volume in Unity Catalog:\n\n"
+        f"```sql\nGRANT READ VOLUME ON VOLUME dev_omni.dev_omni_gold.audio_files "
+        f"TO <your-app-service-principal>;\n```"
+    )
 
 else:
     # ── Filter: only traces that have a matching audio file ────────────────────
@@ -134,10 +157,10 @@ else:
         df = df[mask].reset_index(drop=True)
 
     if df.empty:
-        if not audio_ids:
-            st.error(f"❌ No .wav files found in `{VOLUME_PATH}`. Check the volume path.")
-        else:
-            st.warning("No traces found matching your search.")
+        st.warning(
+            f"No traces match any of the {len(audio_ids)} audio file(s) found in the volume. "
+            "Check that your trace IDs match the audio file names (without `.wav`)."
+        )
 
     else:
         st.success(
