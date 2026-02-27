@@ -32,33 +32,32 @@ def get_client():
     return WorkspaceClient()
 
 # ─────────────────────────────────────────────
-# LIST AUDIO FILES — scanned once per minute
-# Returns (frozenset, error_string) — never silently swallows errors
+# LIST AUDIO FILES via Databricks SDK Files API
+# Uses authenticated HTTP — works even when the /Volumes/ FUSE mount is absent.
+# Returns (frozenset, error_string)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def get_audio_trace_ids():
-    """Return (frozenset of trace IDs with .wav files, error_string or None)."""
-    path_exists = os.path.exists(VOLUME_PATH)
-    if not path_exists:
-        return frozenset(), f"Path does not exist: `{VOLUME_PATH}`"
+    w = get_client()
     try:
-        all_files = os.listdir(VOLUME_PATH)
-        wav_ids = frozenset(
-            os.path.splitext(f)[0]
-            for f in all_files
-            if f.lower().endswith(".wav")
-        )
-        if not wav_ids:
-            non_wav = [f for f in all_files if not f.lower().endswith(".wav")]
-            detail = (
-                f"Directory exists and contains {len(all_files)} file(s), "
-                f"but none end in `.wav`. Other files found: {non_wav[:5]}"
-                if all_files else "Directory exists but is empty."
-            )
-            return frozenset(), detail
-        return wav_ids, None
+        entries = list(w.files.list_directory_contents(VOLUME_PATH))
     except Exception as e:
         return frozenset(), str(e)
+
+    wav_names = [
+        e.name for e in entries
+        if e.name and e.name.lower().endswith(".wav") and not e.is_directory
+    ]
+    if not wav_names:
+        other = [e.name for e in entries if not e.is_directory]
+        detail = (
+            f"Directory is accessible but contains no .wav files. "
+            f"Other files found: {other[:5]}"
+            if other else "Directory is accessible but empty."
+        )
+        return frozenset(), detail
+
+    return frozenset(os.path.splitext(n)[0] for n in wav_names), None
 
 # ─────────────────────────────────────────────
 # FETCH TRACES FROM TABLE
@@ -93,14 +92,15 @@ def fetch_all_traces():
     return df, None
 
 # ─────────────────────────────────────────────
-# GET AUDIO BYTES
+# GET AUDIO BYTES via Databricks SDK Files API
 # ─────────────────────────────────────────────
 def get_audio(trace_id: str):
-    file_path = f"{VOLUME_PATH}/{trace_id}.wav"
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as f:
-            return f.read()
-    return None
+    w = get_client()
+    try:
+        response = w.files.download(f"{VOLUME_PATH}/{trace_id}.wav")
+        return response.contents.read()
+    except Exception:
+        return None
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
