@@ -72,19 +72,21 @@ def get_audio_ids(date_str):
 @st.cache_data(ttl=60)
 def fetch_traces(date_str, audio_ids):
 
+    columns = ["trace_id","input","event_date"]
+
     if not audio_ids:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=columns)
 
     ids_sql = ",".join([f"'{x}'" for x in audio_ids])
 
     sql_date = datetime.strptime(date_str, "%Y%m%d").date()
 
     query = f"""
-    SELECT trace_id,input,event_date
-    FROM {TRACES_TABLE}
-    WHERE event_date = DATE('{sql_date}')
-    AND trace_id IN ({ids_sql})
-    ORDER BY trace_id DESC
+        SELECT trace_id,input,event_date
+        FROM {TRACES_TABLE}
+        WHERE event_date = DATE('{sql_date}')
+        AND trace_id IN ({ids_sql})
+        ORDER BY trace_id DESC
     """
 
     w = get_client()
@@ -96,14 +98,11 @@ def fetch_traces(date_str, audio_ids):
     )
 
     if response.result is None or response.result.data_array is None:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=columns)
 
-    columns = [c.name for c in response.manifest.schema.columns]
     rows = [list(r) for r in response.result.data_array]
 
-    df = pd.DataFrame(rows, columns=columns)
-
-    return df
+    return pd.DataFrame(rows, columns=columns)
 
 
 # ─────────────────────────────────────────────
@@ -213,11 +212,14 @@ page_df = traces_df.iloc[start:end]
 # ─────────────────────────────────────────────
 st.subheader("Trace List")
 
-st.dataframe(
-    page_df[["trace_id","input"]],
-    use_container_width=True,
-    hide_index=True
-)
+if not page_df.empty:
+    st.dataframe(
+        page_df[["trace_id","input"]],
+        use_container_width=True,
+        hide_index=True
+    )
+else:
+    st.warning("No traces found for this date")
 
 
 # ─────────────────────────────────────────────
