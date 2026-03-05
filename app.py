@@ -147,7 +147,6 @@ with st.sidebar:
     st.header("📅 Date Filter")
 
     available_dates, dates_error = get_available_dates()
-    today_str = date.today().strftime("%Y%m%d")
 
     if available_dates:
         selected_date_str = st.selectbox(
@@ -155,12 +154,13 @@ with st.sidebar:
             options=[None] + available_dates,
             index=0,
             format_func=lambda d: "— select a date —" if d is None else f"{d[:4]}-{d[4:6]}-{d[6:]}",
+            key="date_selector",
         )
     else:
         if dates_error:
             st.warning(f"Could not list dates from volume: {dates_error}")
         # Fall back to manual date input
-        picked = st.date_input("Select Date", value=None)
+        picked = st.date_input("Select Date", value=None, key="date_input_fallback")
         selected_date_str = picked.strftime("%Y%m%d") if picked else None
 
     st.divider()
