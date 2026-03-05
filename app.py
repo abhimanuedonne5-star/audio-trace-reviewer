@@ -80,17 +80,24 @@ def get_audio_trace_ids(date_str: str):
     return frozenset(os.path.splitext(n)[0] for n in wav_names), None
 
 # ─────────────────────────────────────────────
-# FETCH TRACES FROM TABLE
+# FETCH TRACES FROM TABLE — only for IDs that have audio files
 # Returns (DataFrame, error_string) — no st.* calls inside (cache must be pure)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=60)
-def fetch_all_traces(date_str: str):
+def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
+    if not audio_ids:
+        return pd.DataFrame(columns=["trace_id", "input"]), None
+
     w = get_client()
     sql_date = datetime.strptime(date_str, "%Y%m%d").date()
+
+    # Build IN list — IDs come from our own volume listing, sanitize to be safe
+    id_list = ", ".join(f"'{tid.replace(chr(39), '')}'" for tid in audio_ids)
     query = f"""
         SELECT trace_id, input
         FROM {TRACES_TABLE}
-        WHERE event_date = DATE('{sql_date}')
+        WHERE event_date IN (DATE('{sql_date}'))
+          AND trace_id IN ({id_list})
         ORDER BY trace_id DESC
     """
 
@@ -169,22 +176,18 @@ with st.sidebar:
     # st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
 # ─────────────────────────────────────────────
-# LOAD DATA
+# LOAD DATA — audio IDs first, then query only those traces
 # ─────────────────────────────────────────────
-with st.spinner("Loading traces..."):
-    df_all, fetch_error = fetch_all_traces(selected_date_str)
+with st.spinner("Loading audio file list..."):
     audio_ids, volume_error = get_audio_trace_ids(selected_date_str)
+
+with st.spinner("Loading traces..."):
+    df_all, fetch_error = fetch_traces_for_audio_ids(selected_date_str, audio_ids)
 
 # ─────────────────────────────────────────────
 # ERROR STATES  (no st.stop() — if/else only)
 # ─────────────────────────────────────────────
-if fetch_error:
-    st.error(f"❌ Query execution failed: {fetch_error}")
-
-elif df_all is None:
-    st.error("❌ No data returned from the traces table.")
-
-elif volume_error:
+if volume_error:
     st.error(f"❌ Cannot read audio volume: {volume_error}")
     st.info(
         "**How to fix:** Make sure the app's service principal has been granted "
@@ -193,9 +196,15 @@ elif volume_error:
         f"TO <your-app-service-principal>;\n```"
     )
 
+elif fetch_error:
+    st.error(f"❌ Query execution failed: {fetch_error}")
+
+elif df_all is None:
+    st.error("❌ No data returned from the traces table.")
+
 else:
-    # ── Filter: only traces that have a matching audio file ────────────────────
-    df = df_all[df_all["trace_id"].isin(audio_ids)].reset_index(drop=True)
+    # df_all already contains only traces with matching audio files
+    df = df_all.reset_index(drop=True)
 
     # ── Apply search ───────────────────────────────────────────────────────────
     if search:
@@ -212,13 +221,25 @@ else:
         )
         with st.expander("🔍 Debug: show IDs from table vs volume"):
             sql_date_debug = datetime.strptime(selected_date_str, "%Y%m%d").date()
-            sql_statement_debug = f"SELECT trace_id, input FROM {TRACES_TABLE} WHERE event_date = '{sql_date_debug}' ORDER BY trace_id DESC"
-            st.markdown("**SQL statement executed:**")
-            st.code(sql_statement_debug, language="sql")
-            st.markdown("**Trace IDs from SQL table** (first 20, filtered by selected date):")
-            st.code("\n".join(df_all["trace_id"].tolist()[:20]) if not df_all.empty else "— table returned 0 rows —")
             st.markdown("**Audio file IDs from volume** (first 20):")
-            st.code("\n".join(sorted(audio_ids)[:20]))
+            st.code("\n".join(sorted(audio_ids)[:20]) if audio_ids else "— no audio files found —")
+
+            st.divider()
+            st.markdown("**Trace IDs from SQL table for this date** (no audio filter — first 20):")
+            try:
+                w = get_client()
+                raw_traces = w.statement_execution.execute_statement(
+                    warehouse_id=WAREHOUSE_ID,
+                    statement=f"SELECT trace_id FROM {TRACES_TABLE} WHERE event_date IN (DATE('{sql_date_debug}')) ORDER BY trace_id DESC LIMIT 20",
+                    wait_timeout="30s",
+                )
+                if raw_traces.result and raw_traces.result.data_array:
+                    table_ids = [row[0] for row in raw_traces.result.data_array]
+                    st.code("\n".join(str(i) for i in table_ids))
+                else:
+                    st.code("— no rows returned for this date —")
+            except Exception as ex:
+                st.code(f"Query failed: {ex}")
 
             st.divider()
             st.markdown("**Actual `event_date` values in table** (no date filter — to check format):")
@@ -226,7 +247,7 @@ else:
                 w = get_client()
                 raw = w.statement_execution.execute_statement(
                     warehouse_id=WAREHOUSE_ID,
-                    statement=f"SELECT DISTINCT {DATE_COLUMN} FROM {TRACES_TABLE} ORDER BY {DATE_COLUMN} DESC LIMIT 10",
+                    statement=f"SELECT DISTINCT event_date FROM {TRACES_TABLE} ORDER BY event_date DESC LIMIT 10",
                     wait_timeout="30s",
                 )
                 if raw.result and raw.result.data_array:
