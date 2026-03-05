@@ -96,7 +96,7 @@ def fetch_all_traces(date_str: str):
                 WHERE event_date = {sql_date}
                 ORDER BY trace_id DESC
             """,
-            wait_timeout="60s"
+            wait_timeout="30s"
         )
     except Exception as e:
         return None, str(e)
