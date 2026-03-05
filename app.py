@@ -87,14 +87,14 @@ def get_audio_trace_ids(date_str: str):
 @st.cache_data(ttl=60)
 def fetch_all_traces(date_str: str):
     w = get_client()
-    sql_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"  # yyyymmdd → yyyy-mm-dd
+    sql_date = datetime.strptime(date_str, "%Y-%m-%d")
     try:
         response = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE {DATE_COLUMN} = DATE '{sql_date}'
+                WHERE {DATE_COLUMN} = {sql_date}
                 ORDER BY trace_id DESC
             """,
             wait_timeout="30s"
