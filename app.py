@@ -94,7 +94,7 @@ def fetch_all_traces(date_str: str):
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE {DATE_COLUMN} = '{sql_date}'
+                WHERE {DATE_COLUMN} = DATE '{sql_date}'
                 ORDER BY trace_id DESC
             """,
             wait_timeout="30s"
@@ -210,10 +210,29 @@ else:
             "Check that your trace IDs match the audio file names (without `.wav`)."
         )
         with st.expander("🔍 Debug: show IDs from table vs volume"):
-            st.markdown("**Trace IDs from SQL table** (first 20):")
+            sql_date_debug = f"{selected_date_str[:4]}-{selected_date_str[4:6]}-{selected_date_str[6:]}"
+            st.markdown(f"**Date sent to SQL:** `{sql_date_debug}` (folder: `{selected_date_str}`)")
+            st.markdown("**Trace IDs from SQL table** (first 20, filtered by selected date):")
             st.code("\n".join(df_all["trace_id"].tolist()[:20]) if not df_all.empty else "— table returned 0 rows —")
             st.markdown("**Audio file IDs from volume** (first 20):")
             st.code("\n".join(sorted(audio_ids)[:20]))
+
+            st.divider()
+            st.markdown("**Actual `event_date` values in table** (no date filter — to check format):")
+            try:
+                w = get_client()
+                raw = w.statement_execution.execute_statement(
+                    warehouse_id=WAREHOUSE_ID,
+                    statement=f"SELECT DISTINCT {DATE_COLUMN} FROM {TRACES_TABLE} ORDER BY {DATE_COLUMN} DESC LIMIT 10",
+                    wait_timeout="30s",
+                )
+                if raw.result and raw.result.data_array:
+                    dates_in_table = [row[0] for row in raw.result.data_array]
+                    st.code("\n".join(str(d) for d in dates_in_table))
+                else:
+                    st.code("— no rows returned (table may be empty) —")
+            except Exception as ex:
+                st.code(f"Query failed: {ex}")
 
     else:
         st.success(
