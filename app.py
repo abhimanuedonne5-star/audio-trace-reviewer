@@ -244,19 +244,21 @@ else:
                     st.code(f"Query failed: {ex}")
 
                 st.divider()
-                st.markdown("**Actual `event_date` values in table** (no date filter — to check format):")
+                st.markdown("**Raw sample from table** (no filters — first 5 rows, all columns):")
                 try:
                     w = get_client()
                     raw = w.statement_execution.execute_statement(
                         warehouse_id=WAREHOUSE_ID,
-                        statement=f"SELECT DISTINCT event_date FROM {TRACES_TABLE} ORDER BY event_date DESC LIMIT 10",
+                        statement=f"SELECT * FROM {TRACES_TABLE} LIMIT 5",
                         wait_timeout="30s",
                     )
                     if raw.result and raw.result.data_array:
-                        dates_in_table = [row[0] for row in raw.result.data_array]
-                        st.code("\n".join(str(d) for d in dates_in_table))
+                        cols = [c.name for c in raw.manifest.schema.columns]
+                        st.code("Columns: " + ", ".join(cols))
+                        for row in raw.result.data_array:
+                            st.code(str(list(row)))
                     else:
-                        st.code("— no rows returned (table may be empty) —")
+                        st.code("— table is empty or inaccessible —")
                 except Exception as ex:
                     st.code(f"Query failed: {ex}")
 
