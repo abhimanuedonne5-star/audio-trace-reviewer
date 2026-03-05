@@ -97,7 +97,7 @@ def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
         SELECT trace_id, input
         FROM {TRACES_TABLE}
         WHERE event_date IN (DATE('{sql_date}'))
-          AND trace_id IN ({id_list})
+          AND TRIM(trace_id) IN ({id_list})
         ORDER BY trace_id DESC
     """
 
@@ -119,7 +119,7 @@ def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
     columns = [col.name for col in response.manifest.schema.columns]
     rows    = [list(row) for row in response.result.data_array]
     df = pd.DataFrame(rows, columns=columns)
-    df["trace_id"] = df["trace_id"].astype(str)
+    df["trace_id"] = df["trace_id"].astype(str).str.strip()
     return df, None
 
 # ─────────────────────────────────────────────
