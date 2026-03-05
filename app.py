@@ -9,7 +9,7 @@ from databricks.sdk import WorkspaceClient
 # ─────────────────────────────────────────────
 VOLUME_PATH  = "/Volumes/dev_omni/dev_omni_gold/audio_files"
 TRACES_TABLE = "dev_omni.dev_omni_gold.traces"
-DATE_COLUMN  = "date"   # column name in TRACES_TABLE that holds the date (YYYYMMDD string)
+DATE_COLUMN  = "event_date"   # column name in TRACES_TABLE that holds the date (YYYYMMDD string)
 # Databricks Apps injects the configured warehouse ID via environment variable.
 # Falls back to the hardcoded ID if running outside of a Databricks Apps context.
 WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "2a6b5b84e8974695")
@@ -87,13 +87,14 @@ def get_audio_trace_ids(date_str: str):
 @st.cache_data(ttl=60)
 def fetch_all_traces(date_str: str):
     w = get_client()
+    sql_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"  # yyyymmdd → yyyy-mm-dd
     try:
         response = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE {DATE_COLUMN} = '{date_str}'
+                WHERE {DATE_COLUMN} = '{sql_date}'
                 ORDER BY trace_id DESC
             """,
             wait_timeout="30s"
