@@ -93,7 +93,7 @@ def fetch_all_traces(date_str: str):
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE event_date = {sql_date}
+                WHERE event_date = '{sql_date}'
                 ORDER BY trace_id DESC
             """,
             wait_timeout="30s"
