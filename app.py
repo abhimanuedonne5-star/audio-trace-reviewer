@@ -87,17 +87,27 @@ def get_audio_trace_ids(date_str: str):
 def fetch_all_traces(date_str: str):
     w = get_client()
     sql_date = datetime.strptime(date_str, "%Y%m%d").date()
+
     try:
         response = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE event_date = "{sql_date}"
+                WHERE event_date = :event_date
                 ORDER BY trace_id DESC
             """,
+            parameters=[
+                {
+                    "name": "event_date",
+                    "value": str(sql_date)
+                }
+            ],
             wait_timeout="30s"
         )
+
+        return response, None
+
     except Exception as e:
         return None, str(e)
 
