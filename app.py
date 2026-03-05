@@ -87,7 +87,7 @@ def get_audio_trace_ids(date_str: str):
 @st.cache_data(ttl=60)
 def fetch_all_traces(date_str: str):
     w = get_client()
-    sql_date = datetime.strptime(date_str, "%Y-%m-%d")
+    sql_date = datetime.strptime(date_str, "%Y%m%d").date()
     try:
         response = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
