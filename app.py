@@ -9,7 +9,6 @@ from databricks.sdk import WorkspaceClient
 # ─────────────────────────────────────────────
 VOLUME_PATH  = "/Volumes/dev_omni/dev_omni_gold/audio_files"
 TRACES_TABLE = "dev_omni.dev_omni_gold.traces"
-DATE_COLUMN  = "event_date"   # column name in TRACES_TABLE that holds the date (YYYYMMDD string)
 # Databricks Apps injects the configured warehouse ID via environment variable.
 # Falls back to the hardcoded ID if running outside of a Databricks Apps context.
 WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "2a6b5b84e8974695")
@@ -94,10 +93,10 @@ def fetch_all_traces(date_str: str):
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE {DATE_COLUMN} = {sql_date}
+                WHERE event_date = {sql_date}
                 ORDER BY trace_id DESC
             """,
-            wait_timeout="30s"
+            wait_timeout="60s"
         )
     except Exception as e:
         return None, str(e)
@@ -161,11 +160,11 @@ with st.sidebar:
     st.header("🔍 Search")
     search = st.text_input("Search by Trace ID or Query", placeholder="e.g. trace_001")
     st.divider()
-    st.caption(f"Volume: `{VOLUME_PATH}/{selected_date_str}`")
-    st.caption(f"Table: `{TRACES_TABLE}`")
-    st.caption(f"Warehouse: `{WAREHOUSE_ID}`")
-    st.caption(f"Streamlit: `{st.__version__}`")
-    st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
+    # st.caption(f"Volume: `{VOLUME_PATH}/{selected_date_str}`")
+    # st.caption(f"Table: `{TRACES_TABLE}`")
+    # st.caption(f"Warehouse: `{WAREHOUSE_ID}`")
+    # st.caption(f"Streamlit: `{st.__version__}`")
+    # st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
 # ─────────────────────────────────────────────
 # LOAD DATA
@@ -210,8 +209,10 @@ else:
             "Check that your trace IDs match the audio file names (without `.wav`)."
         )
         with st.expander("🔍 Debug: show IDs from table vs volume"):
-            sql_date_debug = f"{selected_date_str[:4]}-{selected_date_str[4:6]}-{selected_date_str[6:]}"
-            st.markdown(f"**Date sent to SQL:** `{sql_date_debug}` (folder: `{selected_date_str}`)")
+            sql_date_debug = datetime.strptime(selected_date_str, "%Y%m%d").date()
+            sql_statement_debug = f"SELECT trace_id, input FROM {TRACES_TABLE} WHERE event_date = {sql_date_debug} ORDER BY trace_id DESC"
+            st.markdown("**SQL statement executed:**")
+            st.code(sql_statement_debug, language="sql")
             st.markdown("**Trace IDs from SQL table** (first 20, filtered by selected date):")
             st.code("\n".join(df_all["trace_id"].tolist()[:20]) if not df_all.empty else "— table returned 0 rows —")
             st.markdown("**Audio file IDs from volume** (first 20):")
