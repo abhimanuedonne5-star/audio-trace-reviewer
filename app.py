@@ -96,7 +96,7 @@ def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
     query = f"""
         SELECT trace_id, input
         FROM {TRACES_TABLE}
-        WHERE event_date IN (DATE('{sql_date}'))
+        WHERE event_date IN (DATE({sql_date}))
           AND trace_id IN ({id_list})
         ORDER BY trace_id DESC
     """
