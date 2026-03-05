@@ -209,6 +209,11 @@ else:
             f"No traces match any of the {len(audio_ids)} audio file(s) found in the volume. "
             "Check that your trace IDs match the audio file names (without `.wav`)."
         )
+        with st.expander("🔍 Debug: show IDs from table vs volume"):
+            st.markdown("**Trace IDs from SQL table** (first 20):")
+            st.code("\n".join(df_all["trace_id"].tolist()[:20]) if not df_all.empty else "— table returned 0 rows —")
+            st.markdown("**Audio file IDs from volume** (first 20):")
+            st.code("\n".join(sorted(audio_ids)[:20]))
 
     else:
         st.success(
