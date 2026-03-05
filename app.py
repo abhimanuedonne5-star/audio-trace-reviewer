@@ -96,7 +96,7 @@ def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
     query = f"""
         SELECT trace_id, input
         FROM {TRACES_TABLE}
-        WHERE event_date IN (DATE({sql_date}))
+        WHERE event_date IN (DATE('{sql_date}'))
           AND trace_id IN ({id_list})
         ORDER BY trace_id DESC
     """
@@ -150,20 +150,18 @@ with st.sidebar:
     today_str = date.today().strftime("%Y%m%d")
 
     if available_dates:
-        # Default to today if available, otherwise first (most recent)
-        default_idx = available_dates.index(today_str) if today_str in available_dates else 0
         selected_date_str = st.selectbox(
             "Select Date",
-            options=available_dates,
-            index=default_idx,
-            format_func=lambda d: f"{d[:4]}-{d[4:6]}-{d[6:]}",  # display as YYYY-MM-DD
+            options=[None] + available_dates,
+            index=0,
+            format_func=lambda d: "— select a date —" if d is None else f"{d[:4]}-{d[4:6]}-{d[6:]}",
         )
     else:
         if dates_error:
             st.warning(f"Could not list dates from volume: {dates_error}")
         # Fall back to manual date input
-        picked = st.date_input("Select Date", value=date.today())
-        selected_date_str = picked.strftime("%Y%m%d")
+        picked = st.date_input("Select Date", value=None)
+        selected_date_str = picked.strftime("%Y%m%d") if picked else None
 
     st.divider()
     st.header("🔍 Search")
@@ -176,174 +174,178 @@ with st.sidebar:
     # st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
 # ─────────────────────────────────────────────
-# LOAD DATA — audio IDs first, then query only those traces
+# LOAD DATA — only after a date is selected
 # ─────────────────────────────────────────────
-with st.spinner("Loading audio file list..."):
-    audio_ids, volume_error = get_audio_trace_ids(selected_date_str)
-
-with st.spinner("Loading traces..."):
-    df_all, fetch_error = fetch_traces_for_audio_ids(selected_date_str, audio_ids)
-
-# ─────────────────────────────────────────────
-# ERROR STATES  (no st.stop() — if/else only)
-# ─────────────────────────────────────────────
-if volume_error:
-    st.error(f"❌ Cannot read audio volume: {volume_error}")
-    st.info(
-        "**How to fix:** Make sure the app's service principal has been granted "
-        "`READ VOLUME` on the volume in Unity Catalog:\n\n"
-        f"```sql\nGRANT READ VOLUME ON VOLUME dev_omni.dev_omni_gold.audio_files "
-        f"TO <your-app-service-principal>;\n```"
-    )
-
-elif fetch_error:
-    st.error(f"❌ Query execution failed: {fetch_error}")
-
-elif df_all is None:
-    st.error("❌ No data returned from the traces table.")
+if not selected_date_str:
+    st.info("👈 Select a date from the sidebar to load traces.")
 
 else:
-    # df_all already contains only traces with matching audio files
-    df = df_all.reset_index(drop=True)
+    with st.spinner("Loading audio file list..."):
+        audio_ids, volume_error = get_audio_trace_ids(selected_date_str)
 
-    # ── Apply search ───────────────────────────────────────────────────────────
-    if search:
-        mask = (
-            df["trace_id"].str.contains(search, case=False, na=False) |
-            df["input"].fillna("").astype(str).str.contains(search, case=False, na=False)
+    with st.spinner("Loading traces..."):
+        df_all, fetch_error = fetch_traces_for_audio_ids(selected_date_str, audio_ids)
+
+    # ─────────────────────────────────────────────
+    # ERROR STATES  (no st.stop() — if/else only)
+    # ─────────────────────────────────────────────
+    if volume_error:
+        st.error(f"❌ Cannot read audio volume: {volume_error}")
+        st.info(
+            "**How to fix:** Make sure the app's service principal has been granted "
+            "`READ VOLUME` on the volume in Unity Catalog:\n\n"
+            f"```sql\nGRANT READ VOLUME ON VOLUME dev_omni.dev_omni_gold.audio_files "
+            f"TO <your-app-service-principal>;\n```"
         )
-        df = df[mask].reset_index(drop=True)
 
-    if df.empty:
-        st.warning(
-            f"No traces match any of the {len(audio_ids)} audio file(s) found in the volume. "
-            "Check that your trace IDs match the audio file names (without `.wav`)."
-        )
-        with st.expander("🔍 Debug: show IDs from table vs volume"):
-            sql_date_debug = datetime.strptime(selected_date_str, "%Y%m%d").date()
-            st.markdown("**Audio file IDs from volume** (first 20):")
-            st.code("\n".join(sorted(audio_ids)[:20]) if audio_ids else "— no audio files found —")
+    elif fetch_error:
+        st.error(f"❌ Query execution failed: {fetch_error}")
 
-            st.divider()
-            st.markdown("**Trace IDs from SQL table for this date** (no audio filter — first 20):")
-            try:
-                w = get_client()
-                raw_traces = w.statement_execution.execute_statement(
-                    warehouse_id=WAREHOUSE_ID,
-                    statement=f"SELECT trace_id FROM {TRACES_TABLE} WHERE event_date IN (DATE('{sql_date_debug}')) ORDER BY trace_id DESC LIMIT 20",
-                    wait_timeout="30s",
-                )
-                if raw_traces.result and raw_traces.result.data_array:
-                    table_ids = [row[0] for row in raw_traces.result.data_array]
-                    st.code("\n".join(str(i) for i in table_ids))
-                else:
-                    st.code("— no rows returned for this date —")
-            except Exception as ex:
-                st.code(f"Query failed: {ex}")
-
-            st.divider()
-            st.markdown("**Actual `event_date` values in table** (no date filter — to check format):")
-            try:
-                w = get_client()
-                raw = w.statement_execution.execute_statement(
-                    warehouse_id=WAREHOUSE_ID,
-                    statement=f"SELECT DISTINCT event_date FROM {TRACES_TABLE} ORDER BY event_date DESC LIMIT 10",
-                    wait_timeout="30s",
-                )
-                if raw.result and raw.result.data_array:
-                    dates_in_table = [row[0] for row in raw.result.data_array]
-                    st.code("\n".join(str(d) for d in dates_in_table))
-                else:
-                    st.code("— no rows returned (table may be empty) —")
-            except Exception as ex:
-                st.code(f"Query failed: {ex}")
+    elif df_all is None:
+        st.error("❌ No data returned from the traces table.")
 
     else:
-        st.success(
-            f"✅ {len(df)} traces with audio  |  "
-            f"{len(audio_ids)} total audio files  |  "
-            f"Date: {selected_date_str[:4]}-{selected_date_str[4:6]}-{selected_date_str[6:]}"
-        )
-        st.divider()
+        # df_all already contains only traces with matching audio files
+        df = df_all.reset_index(drop=True)
 
-        # ── Trace selection table ──────────────────────────────────────────────
-        st.subheader("📋 Trace List — Click a row to review")
+        # ── Apply search ───────────────────────────────────────────────────────
+        if search:
+            mask = (
+                df["trace_id"].str.contains(search, case=False, na=False) |
+                df["input"].fillna("").astype(str).str.contains(search, case=False, na=False)
+            )
+            df = df[mask].reset_index(drop=True)
 
-        preview_df = df[["trace_id", "input"]].copy()
-        preview_df["input"] = df["input"].fillna("").astype(str).str[:120] + "..."
-
-        selected_rows = []   # default: nothing selected
-
-        if SUPPORTS_ON_SELECT:
-            try:
-                selection = st.dataframe(
-                    preview_df,
-                    use_container_width=True,
-                    on_select="rerun",
-                    selection_mode="single-row",
-                    column_config={
-                        "trace_id": st.column_config.TextColumn("Trace ID"),
-                        "input"   : st.column_config.TextColumn("Query Preview"),
-                    },
-                    hide_index=True,
-                    key=f"trace_table_{selected_date_str}_{len(df)}",
-                )
-                selected_rows = list(selection.selection.rows)
-            except Exception as e:
-                st.dataframe(preview_df, use_container_width=True, hide_index=True)
-                st.warning(f"Row-click selection unavailable: {e}")
-                selected_rows = []
-        else:
-            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        if df.empty:
             st.warning(
-                f"Your Streamlit version (`{st.__version__}`) does not support "
-                "interactive row selection. Use the dropdown below instead."
+                f"No traces match any of the {len(audio_ids)} audio file(s) found in the volume. "
+                "Check that your trace IDs match the audio file names (without `.wav`)."
             )
-            chosen = st.selectbox(
-                "Select Trace ID to review:",
-                options=["— select —"] + df["trace_id"].tolist(),
-                index=0,
-            )
-            if chosen != "— select —":
-                matches = df[df["trace_id"] == chosen]
-                if not matches.empty:
-                    selected_rows = [int(matches.index[0])]
+            with st.expander("🔍 Debug: show IDs from table vs volume"):
+                sql_date_debug = datetime.strptime(selected_date_str, "%Y%m%d").date()
+                st.markdown("**Audio file IDs from volume** (first 20):")
+                st.code("\n".join(sorted(audio_ids)[:20]) if audio_ids else "— no audio files found —")
 
-        row_valid = (
-            len(selected_rows) > 0
-            and 0 <= int(selected_rows[0]) < len(df)
-        )
+                st.divider()
+                st.markdown("**Trace IDs from SQL table for this date** (no audio filter — first 20):")
+                try:
+                    w = get_client()
+                    raw_traces = w.statement_execution.execute_statement(
+                        warehouse_id=WAREHOUSE_ID,
+                        statement=f"SELECT trace_id FROM {TRACES_TABLE} WHERE event_date IN (DATE('{sql_date_debug}')) ORDER BY trace_id DESC LIMIT 20",
+                        wait_timeout="30s",
+                    )
+                    if raw_traces.result and raw_traces.result.data_array:
+                        table_ids = [row[0] for row in raw_traces.result.data_array]
+                        st.code("\n".join(str(i) for i in table_ids))
+                    else:
+                        st.code("— no rows returned for this date —")
+                except Exception as ex:
+                    st.code(f"Query failed: {ex}")
 
-        if not row_valid:
-            st.info("👆 Click any row above to review the trace and play its audio.")
+                st.divider()
+                st.markdown("**Actual `event_date` values in table** (no date filter — to check format):")
+                try:
+                    w = get_client()
+                    raw = w.statement_execution.execute_statement(
+                        warehouse_id=WAREHOUSE_ID,
+                        statement=f"SELECT DISTINCT event_date FROM {TRACES_TABLE} ORDER BY event_date DESC LIMIT 10",
+                        wait_timeout="30s",
+                    )
+                    if raw.result and raw.result.data_array:
+                        dates_in_table = [row[0] for row in raw.result.data_array]
+                        st.code("\n".join(str(d) for d in dates_in_table))
+                    else:
+                        st.code("— no rows returned (table may be empty) —")
+                except Exception as ex:
+                    st.code(f"Query failed: {ex}")
 
         else:
-            current_idx = int(selected_rows[0])
-            selected    = df.iloc[current_idx]
-            trace_id    = selected["trace_id"]
-
+            st.success(
+                f"✅ {len(df)} traces with audio  |  "
+                f"{len(audio_ids)} total audio files  |  "
+                f"Date: {selected_date_str[:4]}-{selected_date_str[4:6]}-{selected_date_str[6:]}"
+            )
             st.divider()
-            st.subheader(f"🔎 Trace ID: `{trace_id}`")
-            st.caption(f"Record {current_idx + 1} of {len(df)}")
 
-            audio_col, trace_col = st.columns([1, 1])
+            # ── Trace selection table ──────────────────────────────────────────
+            st.subheader("📋 Trace List — Click a row to review")
 
-            with audio_col:
-                st.markdown("### 🎧 Audio")
-                audio_bytes = get_audio(trace_id, selected_date_str)
-                if audio_bytes:
-                    st.audio(audio_bytes, format="audio/wav")
-                    st.caption(f"📁 `{VOLUME_PATH}/{selected_date_str}/{trace_id}.wav`")
-                else:
-                    st.error(f"Audio file unexpectedly missing for `{trace_id}`")
-                    st.caption(f"Expected: `{VOLUME_PATH}/{selected_date_str}/{trace_id}.wav`")
+            preview_df = df[["trace_id", "input"]].copy()
+            preview_df["input"] = df["input"].fillna("").astype(str).str[:120] + "..."
 
-            with trace_col:
-                st.markdown("### 📝 Trace Details")
-                st.markdown("**🧑 User Query**")
-                st.info(
-                    selected["input"]
-                    if pd.notna(selected["input"])
-                    else "_No input recorded_"
+            selected_rows = []   # default: nothing selected
+
+            if SUPPORTS_ON_SELECT:
+                try:
+                    selection = st.dataframe(
+                        preview_df,
+                        use_container_width=True,
+                        on_select="rerun",
+                        selection_mode="single-row",
+                        column_config={
+                            "trace_id": st.column_config.TextColumn("Trace ID"),
+                            "input"   : st.column_config.TextColumn("Query Preview"),
+                        },
+                        hide_index=True,
+                        key=f"trace_table_{selected_date_str}_{len(df)}",
+                    )
+                    selected_rows = list(selection.selection.rows)
+                except Exception as e:
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                    st.warning(f"Row-click selection unavailable: {e}")
+                    selected_rows = []
+            else:
+                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                st.warning(
+                    f"Your Streamlit version (`{st.__version__}`) does not support "
+                    "interactive row selection. Use the dropdown below instead."
                 )
-                st.caption(f"🔑 Trace ID: `{trace_id}`")
+                chosen = st.selectbox(
+                    "Select Trace ID to review:",
+                    options=["— select —"] + df["trace_id"].tolist(),
+                    index=0,
+                )
+                if chosen != "— select —":
+                    matches = df[df["trace_id"] == chosen]
+                    if not matches.empty:
+                        selected_rows = [int(matches.index[0])]
+
+            row_valid = (
+                len(selected_rows) > 0
+                and 0 <= int(selected_rows[0]) < len(df)
+            )
+
+            if not row_valid:
+                st.info("👆 Click any row above to review the trace and play its audio.")
+
+            else:
+                current_idx = int(selected_rows[0])
+                selected    = df.iloc[current_idx]
+                trace_id    = selected["trace_id"]
+
+                st.divider()
+                st.subheader(f"🔎 Trace ID: `{trace_id}`")
+                st.caption(f"Record {current_idx + 1} of {len(df)}")
+
+                audio_col, trace_col = st.columns([1, 1])
+
+                with audio_col:
+                    st.markdown("### 🎧 Audio")
+                    audio_bytes = get_audio(trace_id, selected_date_str)
+                    if audio_bytes:
+                        st.audio(audio_bytes, format="audio/wav")
+                        st.caption(f"📁 `{VOLUME_PATH}/{selected_date_str}/{trace_id}.wav`")
+                    else:
+                        st.error(f"Audio file unexpectedly missing for `{trace_id}`")
+                        st.caption(f"Expected: `{VOLUME_PATH}/{selected_date_str}/{trace_id}.wav`")
+
+                with trace_col:
+                    st.markdown("### 📝 Trace Details")
+                    st.markdown("**🧑 User Query**")
+                    st.info(
+                        selected["input"]
+                        if pd.notna(selected["input"])
+                        else "_No input recorded_"
+                    )
+                    st.caption(f"🔑 Trace ID: `{trace_id}`")
