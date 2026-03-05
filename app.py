@@ -93,7 +93,7 @@ def fetch_all_traces(date_str: str):
             statement=f"""
                 SELECT trace_id, input
                 FROM {TRACES_TABLE}
-                WHERE event_date = '{sql_date}'
+                WHERE event_date = "{sql_date}"
                 ORDER BY trace_id DESC
             """,
             wait_timeout="30s"
@@ -210,7 +210,7 @@ else:
         )
         with st.expander("🔍 Debug: show IDs from table vs volume"):
             sql_date_debug = datetime.strptime(selected_date_str, "%Y%m%d").date()
-            sql_statement_debug = f"SELECT trace_id, input FROM {TRACES_TABLE} WHERE event_date = {sql_date_debug} ORDER BY trace_id DESC"
+            sql_statement_debug = f"SELECT trace_id, input FROM {TRACES_TABLE} WHERE event_date = '{sql_date_debug}' ORDER BY trace_id DESC"
             st.markdown("**SQL statement executed:**")
             st.code(sql_statement_debug, language="sql")
             st.markdown("**Trace IDs from SQL table** (first 20, filtered by selected date):")
