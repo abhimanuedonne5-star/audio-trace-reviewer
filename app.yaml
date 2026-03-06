@@ -5,3 +5,6 @@ command:
   - --server.address=0.0.0.0
   - --server.headless=true
   - --client.toolbarMode=viewer
+env:
+  - name: STREAMLIT_CLIENT_TOOLBAR_MODE
+    value: "viewer"
