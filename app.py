@@ -94,14 +94,17 @@ def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
 
     # Build IN list — IDs come from our own volume listing, sanitize to be safe
     id_list = ", ".join(f"'{tid.replace(chr(39), '')}'" for tid in audio_ids)
+    # query = f"""
+    #     SELECT trace_id, input
+    #     FROM {TRACES_TABLE}
+    #     WHERE event_date IN (DATE(:event_date))
+    #       AND TRIM(trace_id) IN ({id_list})
+    #     ORDER BY trace_id DESC
+    # """
     query = f"""
         SELECT trace_id, input
         FROM {TRACES_TABLE}
-        WHERE event_date IN (DATE(:event_date))
-          AND TRIM(trace_id) IN ({id_list})
-        ORDER BY trace_id DESC
     """
-
     try:
         response = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
@@ -169,11 +172,11 @@ with st.sidebar:
     st.header("🔍 Search")
     search = st.text_input("Search by Trace ID or Query", placeholder="e.g. trace_001")
     st.divider()
-    # st.caption(f"Volume: `{VOLUME_PATH}/{selected_date_str}`")
-    # st.caption(f"Table: `{TRACES_TABLE}`")
-    # st.caption(f"Warehouse: `{WAREHOUSE_ID}`")
-    # st.caption(f"Streamlit: `{st.__version__}`")
-    # st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
+    st.caption(f"Volume: `{VOLUME_PATH}/{selected_date_str}`")
+    st.caption(f"Table: `{TRACES_TABLE}`")
+    st.caption(f"Warehouse: `{WAREHOUSE_ID}`")
+    st.caption(f"Streamlit: `{st.__version__}`")
+    st.caption(f"on_select supported: `{SUPPORTS_ON_SELECT}`")
 
 # ─────────────────────────────────────────────
 # LOAD DATA — only after a date is selected
