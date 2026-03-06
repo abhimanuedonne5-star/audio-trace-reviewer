@@ -305,10 +305,8 @@ else:
                     audio_bytes = get_audio(trace_id, selected_date_str)
                     if audio_bytes:
                         st.audio(audio_bytes, format="audio/wav")
-                        st.caption(f"📁 `{VOLUME_PATH}/{selected_date_str}/{trace_id}.wav`")
                     else:
                         st.error(f"Audio file unexpectedly missing for `{trace_id}`")
-                        st.caption(f"Expected: `{VOLUME_PATH}/{selected_date_str}/{trace_id}.wav`")
 
                 with trace_col:
                     st.markdown("### 📝 Trace Details")
