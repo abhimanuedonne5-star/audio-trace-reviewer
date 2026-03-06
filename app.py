@@ -94,17 +94,14 @@ def fetch_traces_for_audio_ids(date_str: str, audio_ids: frozenset):
 
     # Build IN list — IDs come from our own volume listing, sanitize to be safe
     id_list = ", ".join(f"'{tid.replace(chr(39), '')}'" for tid in audio_ids)
-    # query = f"""
-    #     SELECT trace_id, input
-    #     FROM {TRACES_TABLE}
-    #     WHERE event_date IN (DATE(:event_date))
-    #       AND TRIM(trace_id) IN ({id_list})
-    #     ORDER BY trace_id DESC
-    # """
     query = f"""
         SELECT trace_id, input
         FROM {TRACES_TABLE}
+        WHERE event_date IN (DATE(:event_date))
+          AND TRIM(trace_id) IN ({id_list})
+        ORDER BY trace_id DESC
     """
+    
     try:
         response = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
@@ -237,10 +234,8 @@ else:
                     w = get_client()
                     raw_traces = w.statement_execution.execute_statement(
                         warehouse_id=WAREHOUSE_ID,
-                        # statement=f"SELECT trace_id FROM {TRACES_TABLE} WHERE event_date IN (DATE(:event_date)) ORDER BY trace_id DESC LIMIT 20",
-                        statement=f"SELECT * FROM {TRACES_TABLE} ",
-
-                        # parameters=[StatementParameterListItem(name="event_date", value=str(sql_date_debug))],
+                        statement=f"SELECT trace_id FROM {TRACES_TABLE} WHERE event_date IN (DATE(:event_date)) ORDER BY trace_id DESC LIMIT 20",
+                        parameters=[StatementParameterListItem(name="event_date", value=str(sql_date_debug))],
                         wait_timeout="30s",
                     )
                     if raw_traces.result and raw_traces.result.data_array:
